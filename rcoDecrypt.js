@@ -11,11 +11,32 @@ const pageLinks = new Array();
 const urlPattern = /^https?:\/\/(?:www\.)?[a-z0-9-]+(?:\.[a-z0-9-]+)+\b(?:[\/a-z0-9-._~:?#@!$&'()*+,;=%]*)$/i;
 const reverseOrder = false;
 
-// Detect obfuscation replacement pattern dynamically
-const replacePatternRegex = /\.replace\(\s*\/(\w+__\w+_)\/g\s*,\s*['"](\w)['"]\s*\)/;
+// Detect obfuscation replacement pattern dynamically.
+// The site replaces a token like /v6__7zK980_/g with a single char. That char used to be
+// an inline string literal, but is now sometimes indirected through a variable
+// (e.g. `var xyz = 'g'; l = l.replace(/v6__7zK980_/g, xyz);`), so handle both forms.
+const replacePatternRegex = /\.replace\(\s*\/(\w+__\w+_)\/g\s*,\s*(?:['"](\w)['"]|(\w+))\s*\)/;
 const replaceMatch = _encryptedString.match(replacePatternRegex);
-const obfuscationPattern = replaceMatch ? new RegExp(replaceMatch[1], 'g') : /\w{2}__\w{6}_/g;
-const replacementChar = replaceMatch ? replaceMatch[2] : 'e';
+
+let obfuscationPattern = /\w{2}__\w{6}_/g;
+let replacementChar = 'e';
+
+if (replaceMatch) {
+  obfuscationPattern = new RegExp(replaceMatch[1], 'g');
+
+  if (replaceMatch[2]) {
+    // Inline literal: .replace(/token/g, "g")
+    replacementChar = replaceMatch[2];
+  } else {
+    // Variable reference: resolve the last `varName = 'x'` assignment
+    const varName = replaceMatch[3];
+    const assignRegex = new RegExp(varName + "\\s*=\\s*['\"](\\w)['\"]", 'g');
+    const assignMatches = [..._encryptedString.matchAll(assignRegex)];
+    if (assignMatches.length > 0) {
+      replacementChar = assignMatches[assignMatches.length - 1][1];
+    }
+  }
+}
 
 // Find custom function calls that pass a long string alongside a known array variable
 // e.g. dTfnT(2, 3, 4, 1, _54BkmOX9Y, 7, 1, "afobagKat...encodedImageUrl...")
@@ -26,14 +47,24 @@ const baseUrlMatch = _encryptedString.match(/baeu\(\w+,\s*["'](https?:\/\/[^"']+
 const detectedBaseUrl = baseUrlMatch ? baseUrlMatch[1] : null;
 
 arrayVars.forEach(arrVar => {
-  const callRegex = new RegExp('\\w+\\s*\\([^)]*\\b' + arrVar + '\\b[^)]*,\\s*["\']([^"\']{20,})["\'][,\\s]*\\)', 'g');
+  // Grab the whole call that references this array var (the args never contain ')').
+  const callRegex = new RegExp('\\w+\\s*\\([^)]*\\b' + arrVar + '\\b[^)]*\\)', 'g');
   const calls = [..._encryptedString.matchAll(callRegex)];
   if (calls.length === 0) return;
-  const values = calls.map(c => c[1]);
+
+  // A call may now carry extra decoy/token string args alongside the encrypted URL
+  // (e.g. dTfnT(..., "<encrypted url>", "<token>")). The encrypted URL is always the
+  // longest quoted string, so pick that one rather than assuming it is the last arg.
+  const values = calls
+    .map(call => {
+      const strings = [...call[0].matchAll(/["']([^"']{20,})["']/g)].map(s => s[1]);
+      return strings.sort((a, b) => b.length - a.length)[0];
+    })
+    .filter(Boolean);
+  if (values.length === 0) return;
+
   const offset = findPrefixOffset(values);
-  calls.forEach(c => {
-    if (c[1]) pageLinks.push(decryptLink(c[1], offset));
-  });
+  values.forEach(value => pageLinks.push(decryptLink(value, offset)));
 });
 
 
