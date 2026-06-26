@@ -28,39 +28,56 @@ if (replaceMatch) {
     // Inline literal: .replace(/token/g, "g")
     replacementChar = replaceMatch[2];
   } else {
-    // Variable reference: resolve the last `varName = 'x'` assignment
+    // Variable reference: resolve the last `varName = <rhs>;` assignment. The rhs is a
+    // plain literal (`xyz = 'g'`) or, on newer pages, an obfuscated string concat
+    // (`xyz = "" + "g" + ""`). Grab every quoted literal in the rhs and join them.
     const varName = replaceMatch[3];
-    const assignRegex = new RegExp(varName + "\\s*=\\s*['\"](\\w)['\"]", 'g');
+    const assignRegex = new RegExp(varName + "\\s*=\\s*([^;]+);", 'g');
     const assignMatches = [..._encryptedString.matchAll(assignRegex)];
     if (assignMatches.length > 0) {
-      replacementChar = assignMatches[assignMatches.length - 1][1];
+      const rhs = assignMatches[assignMatches.length - 1][1];
+      const joined = [...rhs.matchAll(/['"]([^'"]*)['"]/g)].map(m => m[1]).join('');
+      if (joined) {
+        replacementChar = joined;
+      }
     }
   }
 }
 
-// Find custom function calls that pass a long string alongside a known array variable
-// e.g. dTfnT(2, 3, 4, 1, _54BkmOX9Y, 7, 1, "afobagKat...encodedImageUrl...")
-const arrayVars = [..._encryptedString.matchAll(/var\s+(\w+)\s*=\s*new\s+Array\(\)\s*;/g)].map(m => m[1]);
+// Identify the real image array: the one indexed by `currImage` in the page loader,
+// e.g. cigvyur8Dm4(5, _InpV8PM7Z[currImage]) / cVd9rw1YdFS(5, _Q3mAIwbd[currImage]).
+// `currImage` only ever appears in RCO's own loader, so anchoring on it stays correct
+// even though _encryptedString is the WHOLE page (jQuery/libs contain many unrelated
+// `fn(n, arr[..])` patterns that a generic regex would match first). This also skips
+// the decoy arrays the site populates. Fall back to every `new Array()` var if absent.
+const loaderArrayMatch = _encryptedString.match(/(\w+)\s*\[\s*currImage\s*\]/);
+const arrayVars = loaderArrayMatch
+  ? [loaderArrayMatch[1]]
+  : [..._encryptedString.matchAll(/var\s+(\w+)\s*=\s*new\s+Array\(\)\s*;/g)].map(m => m[1]);
 
 // Detect base URL from the site's decode function
 const baseUrlMatch = _encryptedString.match(/baeu\(\w+,\s*["'](https?:\/\/[^"']+)["']\)/);
 const detectedBaseUrl = baseUrlMatch ? baseUrlMatch[1] : null;
 
 arrayVars.forEach(arrVar => {
-  // Grab the whole call that references this array var (the args never contain ')').
-  const callRegex = new RegExp('\\w+\\s*\\([^)]*\\b' + arrVar + '\\b[^)]*\\)', 'g');
-  const calls = [..._encryptedString.matchAll(callRegex)];
-  if (calls.length === 0) return;
+  // Newer pages fill the array with direct pushes: _arr.push("<encrypted url>").
+  const pushRegex = new RegExp(arrVar + '\\.push\\(\\s*["\']([^"\']{20,})["\']', 'g');
+  let values = [..._encryptedString.matchAll(pushRegex)].map(m => m[1]);
 
-  // A call may now carry extra decoy/token string args alongside the encrypted URL
-  // (e.g. dTfnT(..., "<encrypted url>", "<token>")). The encrypted URL is always the
-  // longest quoted string, so pick that one rather than assuming it is the last arg.
-  const values = calls
-    .map(call => {
-      const strings = [...call[0].matchAll(/["']([^"']{20,})["']/g)].map(s => s[1]);
-      return strings.sort((a, b) => b.length - a.length)[0];
-    })
-    .filter(Boolean);
+  // Older pages fill it through a custom function call that passes the array var
+  // alongside the encrypted URL, e.g. dTfnT(2,3,4,1,_arr,7,"<encrypted url>","<token>").
+  // The array name never appears in a push there, so fall back to scanning those calls.
+  if (values.length === 0) {
+    const callRegex = new RegExp('\\w+\\s*\\([^)]*\\b' + arrVar + '\\b[^)]*\\)', 'g');
+    values = [..._encryptedString.matchAll(callRegex)]
+      .map(call => {
+        // A call may carry decoy/token string args alongside the encrypted URL; the
+        // encrypted URL is always the longest quoted string, so pick that one.
+        const strings = [...call[0].matchAll(/["']([^"']{20,})["']/g)].map(s => s[1]);
+        return strings.sort((a, b) => b.length - a.length)[0];
+      })
+      .filter(Boolean);
+  }
   if (values.length === 0) return;
 
   const offset = findPrefixOffset(values);
