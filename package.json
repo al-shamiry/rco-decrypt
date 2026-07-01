@@ -7,7 +7,7 @@
   "type": "module",
   "main": "rcoDecrypt.js",
   "scripts": {
-    "test": "node rcoDecrypt",
+    "test": "node test",
     "gen": "node builder"
   },
   "devDependencies": {

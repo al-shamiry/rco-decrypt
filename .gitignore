@@ -136,4 +136,7 @@ dist
 .pnp.*
 
 # Project specific
-sampleScriptText.js
+sampleScriptText*.js
+test.html
+rco_combined.js
+pages.json

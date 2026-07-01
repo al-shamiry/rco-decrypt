@@ -12,16 +12,16 @@ Install dependencies:
    ```
 
 #### Testing and Building
-   Test the image parsing logic:
+   Generate the configuration:
+   ```bash
+   npm run gen
+   ```
+
+   Test the image parsing logic (look below for `sampleScriptText.js` and `pages.json`)
    ```bash
    npm run test
    ```
 *Testing for post decryption is not implemented yet as there is currently no need for that feature.*
-
-   Generate the JSON:
-   ```bash
-   npm run gen
-   ```
 
 ## Configuration
 
@@ -38,19 +38,31 @@ For more advanced configuration, see `builder.js` params.
 
 ## Script Structure
 
-Key files in this project:
-
-**rcoDecrypt.js**  
-Handles page list parsing from Readcomiconline. Must "return":
+**rcoDecrypt.js**
+Handles page list parsing. Must "return":
 ```js
 JSON.stringify(parsedPageArray)
 ```
 
-**rcoPostDecrypt.js** (optional)  
+**rcoPostDecrypt.js** (optional)
 Processes the page list array. Must also "return":
 ```js
 JSON.stringify(parsedPageArray)
 ```
 
 **sampleScriptText.js**  
-Example HTML/script content from RCO for testing `rcoDecrypt.js`
+A real page capture from RCO used to test `rcoDecrypt.js`.
+
+**pages.json**  
+Maps page numbers to their expected image path, used to verify the decoded output. Add as few or as many pages as you like, copy an image address from the browser and paste it in (any query string is ignored):
+```json
+{
+  "pages": [
+        {
+            "page": "1",
+            "path": ""
+        }
+    ]
+}
+```
+**Make sure page links are of the same image quality and server to** `sampleScriptText.js`
