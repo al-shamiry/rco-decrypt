@@ -44,15 +44,28 @@ if (replaceMatch) {
   }
 }
 
-// Identify the real image array: the one indexed by `currImage` in the page loader,
-// e.g. cigvyur8Dm4(5, _InpV8PM7Z[currImage]) / cVd9rw1YdFS(5, _Q3mAIwbd[currImage]).
+// Identify the real image array: the one indexed by `currImage` inside RCO's loader
+// CALL, e.g. cigvyur8Dm4(5, _InpV8PM7Z[currImage]) / cVd9rw1YdFS(5, _Q3mAIwbd[currImage]).
 // `currImage` only ever appears in RCO's own loader, so anchoring on it stays correct
 // even though _encryptedString is the WHOLE page (jQuery/libs contain many unrelated
-// `fn(n, arr[..])` patterns that a generic regex would match first). This also skips
-// the decoy arrays the site populates. Fall back to every `new Array()` var if absent.
-const loaderArrayMatch = _encryptedString.match(/(\w+)\s*\[\s*currImage\s*\]/);
-const arrayVars = loaderArrayMatch
-  ? [loaderArrayMatch[1]]
+// `fn(n, arr[..])` patterns that a generic regex would match first). We also require the
+// `fn(NUM, ARR[currImage])` call shape and, critically, SKIP commented-out matches: RCO
+// plants a decoy loader line a few lines BEFORE the real call. That decoy used to be a
+// bare `//_decoyArr[currImage];` (defeated by requiring the call shape), but now carries
+// the full call shape too (`//_decoyArr[currImage]; fn(5, _decoyArr[currImage]);`), so the
+// call-shape check alone no longer skips it — we must reject any match preceded by `//` on
+// its own line. Fall back to every `new Array()` if no live loader call is found.
+const loaderArrayRegex = /\w+\s*\(\s*\d+\s*,\s*(\w+)\s*\[\s*currImage\s*\]/g;
+let realArrayVar = null;
+for (const m of _encryptedString.matchAll(loaderArrayRegex)) {
+  const lineStart = _encryptedString.lastIndexOf("\n", m.index) + 1;
+  const beforeMatch = _encryptedString.slice(lineStart, m.index);
+  if (beforeMatch.includes("//")) continue; // commented-out decoy loader line
+  realArrayVar = m[1];
+  break;
+}
+const arrayVars = realArrayVar
+  ? [realArrayVar]
   : [..._encryptedString.matchAll(/var\s+(\w+)\s*=\s*new\s+Array\(\)\s*;/g)].map(m => m[1]);
 
 // Detect base URL from the site's decode function
